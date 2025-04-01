@@ -39,46 +39,51 @@ class DepartmentHodController extends Controller
             if (isset($request->id)) {
                 DB::beginTransaction();
                 try {
-                    if (isset($request->id)) {
-                        for ($i = 0; $i < count($request->id); $i++) {
-                            $auditObjection = AuditObjection::find($request->id[$i]);
-                            $auditObjection->is_department_hod_forward = 1;
-                            if ($auditObjection->status < 5) {
-                                $auditObjection->status = 5;
-                            }
-                            $auditObjection->save();
-                        }
-                    }
-
                     $audit = Audit::find($request->audit_id);
+                    if ($audit) {
+                        if (isset($request->id)) {
+                            for ($i = 0; $i < count($request->id); $i++) {
+                                $auditObjection = AuditObjection::find($request->id[$i]);
+                                $auditObjection->is_department_hod_forward = 1;
+                                if ($auditObjection->status < 5) {
+                                    $auditObjection->status = 5;
+                                }
+                                $auditObjection->save();
+                            }
+                        }
 
-                    if ($audit->status <= 7) {
-                        $audit->status = 7;
-                        $audit->save();
+
+                        if ($audit->status <= 7) {
+                            $audit->status = 7;
+                            $audit->save();
+                        }
+
+                        // send mail code
+                        // $userdepartment = User::where('department_id', $audit->department_id)->whereNotNull('email')->pluck('email')->toArray();
+
+                        // $userdepartment = User::where('department_id', $audit->department_id)->whereNotNull('email')->pluck('email')->toArray();
+                        // $auditor = User::whereHas('userAssignAudit', function ($q) use ($request) {
+                        //     $q->where('audit_id', $request->audit_id);
+                        // })->pluck('email')->toArray();
+                        // $mca = User::whereHas('roles', function ($q) {
+                        //     $q->whereIn('name', ['MCA', 'DY MCA']);
+                        // })->pluck('email')->toArray();
+
+                        // $receiver_list = array_merge($userdepartment, $auditor, $mca);
+
+                        // Mail::send('program-audit.mca.hmm.send-mail', ['body' => 'Body goes here'], function ($message) use ($receiver_list) {
+                        //     $message->from('from@example.com', 'Your Name');
+                        //     $message->to($receiver_list);
+                        //     $message->subject('Hello');
+                        // });
+                        // end of send mail code
+
+                        DB::commit();
+                        return response()->json(['success' => 'Objection send successful']);
+                    } else {
+                        DB::rollback();
+                        return response()->json(['error' => 'Something went wrong please try again']);
                     }
-
-                    // send mail code
-                    // $userdepartment = User::where('department_id', $audit->department_id)->whereNotNull('email')->pluck('email')->toArray();
-
-                    // $userdepartment = User::where('department_id', $audit->department_id)->whereNotNull('email')->pluck('email')->toArray();
-                    // $auditor = User::whereHas('userAssignAudit', function ($q) use ($request) {
-                    //     $q->where('audit_id', $request->audit_id);
-                    // })->pluck('email')->toArray();
-                    // $mca = User::whereHas('roles', function ($q) {
-                    //     $q->whereIn('name', ['MCA', 'DY MCA']);
-                    // })->pluck('email')->toArray();
-
-                    // $receiver_list = array_merge($userdepartment, $auditor, $mca);
-
-                    // Mail::send('program-audit.mca.hmm.send-mail', ['body' => 'Body goes here'], function ($message) use ($receiver_list) {
-                    //     $message->from('from@example.com', 'Your Name');
-                    //     $message->to($receiver_list);
-                    //     $message->subject('Hello');
-                    // });
-                    // end of send mail code
-
-                    DB::commit();
-                    return response()->json(['success' => 'Objection send successful']);
                 } catch (\Exception $e) {
                     DB::rollback();
                     return response()->json(['error' => 'Something went wrong']);
@@ -123,60 +128,64 @@ class DepartmentHodController extends Controller
             try {
                 DB::beginTransaction();
 
+                $auditStatus = Audit::where('id', $request->audit_id)->value('status');
 
+                if ($auditStatus) {
+                    $auditObjection = AuditObjection::find($request->audit_objection_id);
+                    $auditObjection->department_draft_remark = $request->department_remark;
+                    $auditObjection->submit_compliance = $request->submit_compliance;
+                    if ($request->is_draft_save == 1) {
+                        $auditObjection->is_department_draft_save = 1;
+                    } else {
+                        $audit = Audit::with(['from', 'to', 'department'])->find($request->audit_id);
+                        $signature = Signature::where([
+                            'department_id' => $audit->department_id
+                        ])->value('image');
 
-                $auditObjection = AuditObjection::find($request->audit_objection_id);
-                $auditObjection->department_draft_remark = $request->department_remark;
-                $auditObjection->submit_compliance = $request->submit_compliance;
-                if ($request->is_draft_save == 1) {
-                    $auditObjection->is_department_draft_save = 1;
-                } else {
-                    $audit = Audit::with(['from', 'to', 'department'])->find($request->audit_id);
-                    $signature = Signature::where([
-                        'department_id' => $audit->department_id
-                    ])->value('image');
+                        $name = $this->generateFinalPdf($audit, $signature);
 
-                    $name = $this->generateFinalPdf($audit, $signature);
-
-                    $auditObjection->is_department_draft_save = 0;
-                    $auditObjection->department_letter = $name;
-                    $auditObjection->compliance_submit_date = now();
-                    $auditObjection->department_remark = $request->department_remark;
-                }
-
-                if ($auditObjection->status < 6) {
-                    $auditObjection->status = 6;
-                }
-
-                $auditObjection->department_hod_final_status = null;
-                $auditObjection->department_mca_second_status = null;
-                $auditObjection->auditor_status = null;
-                $auditObjection->dymca_final_status = null;
-                $auditObjection->mca_final_status = null;
-                if ($request->hasFile('department_files')) {
-                    if (Storage::exists('public/' . $auditObjection->department_file)) {
-                        Storage::delete('public/' . $auditObjection->department_file);
+                        $auditObjection->is_department_draft_save = 0;
+                        $auditObjection->department_letter = $name;
+                        $auditObjection->compliance_submit_date = now();
+                        $auditObjection->department_remark = $request->department_remark;
                     }
-                    $file = $request->department_files->store('department');
 
-                    $auditObjection->department_file = $file;
-                }
+                    if ($auditObjection->status < 6) {
+                        $auditObjection->status = 6;
+                    }
 
-                $auditObjection->save();
+                    $auditObjection->department_hod_final_status = null;
+                    $auditObjection->department_mca_second_status = null;
+                    $auditObjection->auditor_status = null;
+                    $auditObjection->dymca_final_status = null;
+                    $auditObjection->mca_final_status = null;
+                    if ($request->hasFile('department_files')) {
+                        if (Storage::exists('public/' . $auditObjection->department_file)) {
+                            Storage::delete('public/' . $auditObjection->department_file);
+                        }
+                        $file = $request->department_files->store('department');
 
-                if ($request->is_draft_save == 0) {
-                    $auditStatus = Audit::where('id', $request->audit_id)->value('status');
+                        $auditObjection->department_file = $file;
+                    }
 
-                    Audit::where('id', $request->audit_id)->update([
-                        'status' => ($auditStatus > 7) ? $auditStatus : 8
+                    $auditObjection->save();
+
+                    if ($request->is_draft_save == 0) {
+
+                        Audit::where('id', $request->audit_id)->update([
+                            'status' => ($auditStatus > 7) ? $auditStatus : 8
+                        ]);
+                    }
+
+                    DB::commit();
+
+                    return response()->json([
+                        'success' => 'Compliance Submited Successfully'
                     ]);
+                } else {
+                    DB::rollback();
+                    return response()->json(['error' => 'Something went wrong please try again']);
                 }
-
-                DB::commit();
-
-                return response()->json([
-                    'success' => 'Compliance Submited Successfully'
-                ]);
             } catch (\Exception $e) {
                 DB::rollback();
                 \Log::info($e);

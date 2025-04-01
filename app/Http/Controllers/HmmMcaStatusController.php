@@ -65,23 +65,27 @@ class HmmMcaStatusController extends Controller
             if (Auth::user()->hasRole('MCA')) {
                 try {
                     DB::beginTransaction();
-                    $auditObjection = AuditObjection::find($request->audit_objection_id);
-                    $auditObjection->mca_status = $request->mca_status;
-                    $auditObjection->mca_remark = $request->mca_remark;
-                    if ($auditObjection->status < 3 && $request->mca_status) {
-                        $auditObjection->status = 3;
-                    }
-                    $auditObjection->save();
-
-                    if ($request->mca_status == 1) {
-                        $audit = Audit::find($request->audit_id);
-                        if ($audit->status <= 6) {
-                            $audit->status = 6;
-                            $audit->save();
+                    $audit = Audit::find($request->audit_id);
+                    if ($audit) {
+                        $auditObjection = AuditObjection::find($request->audit_objection_id);
+                        $auditObjection->mca_status = $request->mca_status;
+                        $auditObjection->mca_remark = $request->mca_remark;
+                        if ($auditObjection->status < 3 && $request->mca_status) {
+                            $auditObjection->status = 3;
                         }
+                        $auditObjection->save();
+
+                        if ($request->mca_status == 1) {
+                            if ($audit->status <= 6) {
+                                $audit->status = 6;
+                                $audit->save();
+                            }
+                        }
+                        DB::commit();
+                        return response()->json(['success' => 'Objection status updated successful']);
+                    } else {
+                        return response()->json(['error' => 'Something went wrong, please try again']);
                     }
-                    DB::commit();
-                    return response()->json(['success' => 'Objection status updated successful']);
                 } catch (\Exception $e) {
                     DB::rollback();
                     return response()->json(['error' => 'Something went wrong!']);
@@ -103,20 +107,31 @@ class HmmMcaStatusController extends Controller
                     return response()->json(['error' => 'Something went wrong!']);
                 }
             } else {
-                AuditObjection::where('id', $request->audit_objection_id)
-                    ->update([
-                        'is_department_hod_forward' => $request->is_department_hod_forward,
-                        'department_hod_remark' => $request->department_hod_remark,
-                    ]);
+                try {
+                    DB::beginTransaction();
+                    $audit = Audit::find($request->audit_id);
+                    if ($audit) {
+                        AuditObjection::where('id', $request->audit_objection_id)
+                            ->update([
+                                'is_department_hod_forward' => $request->is_department_hod_forward,
+                                'department_hod_remark' => $request->department_hod_remark,
+                            ]);
 
-                $audit = Audit::find($request->audit_id);
+                        if ($audit->status <= 7) {
+                            $audit->status = 7;
+                            $audit->save();
+                        }
 
-                if ($audit->status <= 7) {
-                    $audit->status = 7;
-                    $audit->save();
+                        DB::commit();
+                        return response()->json(['success' => 'Objection forward ro department successful']);
+                    } else {
+                        DB::rollback();
+                        return response()->json(['error' => 'Something went something, please try again!']);
+                    }
+                } catch (\Exception $e) {
+                    DB::rollback();
+                    return response()->json(['error' => 'Something went something, please try again!']);
                 }
-
-                return response()->json(['success' => 'Objection forward ro department successful']);
             }
         }
     }
